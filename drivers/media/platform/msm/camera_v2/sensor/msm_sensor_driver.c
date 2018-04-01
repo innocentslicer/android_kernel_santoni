@@ -1,5 +1,4 @@
 /* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,22 +10,19 @@
  * GNU General Public License for more details.
  */
 
-#define SENSOR_DRIVER_I2C "i2c_camera"
+#define SENSOR_DRIVER_I2C "camera"
 /* Header file declaration */
 #include "msm_sensor.h"
 #include "msm_sd.h"
 #include "camera.h"
 #include "msm_cci.h"
 #include "msm_camera_dt_util.h"
-#include <linux/hardware_info.h>
 
 /* Logging macro */
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
 #define SENSOR_MAX_MOUNTANGLE (360)
-char fusionid_back[64] = { 0 };
-char fusionid_front[64] = { 0 };
 
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev);
@@ -90,11 +86,14 @@ static int32_t msm_sensor_driver_create_i2c_v4l_subdev
 	struct i2c_client *client = s_ctrl->sensor_i2c_client->client;
 
 	CDBG("%s %s I2c probe succeeded\n", __func__, client->name);
-	rc = camera_init_v4l2(&client->dev, &session_id);
-	if (rc < 0) {
-		pr_err("failed: camera_init_i2c_v4l2 rc %d", rc);
-		return rc;
+	if (0 == s_ctrl->bypass_video_node_creation) {
+		rc = camera_init_v4l2(&client->dev, &session_id);
+		if (rc < 0) {
+			pr_err("failed: camera_init_i2c_v4l2 rc %d", rc);
+			return rc;
+		}
 	}
+
 	CDBG("%s rc %d session_id %d\n", __func__, rc, session_id);
 	snprintf(s_ctrl->msm_sd.sd.name,
 		sizeof(s_ctrl->msm_sd.sd.name), "%s",
@@ -131,11 +130,14 @@ static int32_t msm_sensor_driver_create_v4l_subdev
 	int32_t rc = 0;
 	uint32_t session_id = 0;
 
-	rc = camera_init_v4l2(&s_ctrl->pdev->dev, &session_id);
-	if (rc < 0) {
-		pr_err("failed: camera_init_v4l2 rc %d", rc);
-		return rc;
+	if (0 == s_ctrl->bypass_video_node_creation) {
+		rc = camera_init_v4l2(&s_ctrl->pdev->dev, &session_id);
+		if (rc < 0) {
+			pr_err("failed: camera_init_v4l2 rc %d", rc);
+			return rc;
+		}
 	}
+
 	CDBG("rc %d session_id %d", rc, session_id);
 	s_ctrl->sensordata->sensor_info->session_id = session_id;
 
@@ -339,6 +341,42 @@ static int32_t msm_sensor_fill_ois_subdevid_by_name(
 		src_node = NULL;
 	}
 
+	return rc;
+}
+
+static int32_t msm_sensor_fill_flash_subdevid_by_name(
+				struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int32_t rc = 0;
+	struct device_node *src_node = NULL;
+	uint32_t val = 0;
+	int32_t *flash_subdev_id;
+	struct  msm_sensor_info_t *sensor_info;
+	struct device_node *of_node = s_ctrl->of_node;
+
+	if (!of_node)
+		return -EINVAL;
+
+	sensor_info = s_ctrl->sensordata->sensor_info;
+	flash_subdev_id = &sensor_info->subdev_id[SUB_MODULE_LED_FLASH];
+
+	*flash_subdev_id = -1;
+
+	src_node = of_parse_phandle(of_node, "qcom,led-flash-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,flash cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			return -EINVAL;
+		}
+		*flash_subdev_id = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
 	return rc;
 }
 
@@ -639,27 +677,6 @@ static void msm_sensor_fill_sensor_info(struct msm_sensor_ctrl_t *s_ctrl,
 	strlcpy(entity_name, s_ctrl->msm_sd.sd.entity.name, MAX_SENSOR_NAME);
 }
 
-extern int main_module_id;
-extern int sub_module_id;
-static const char *module_info[] = {
-	"Unkonw",
-	"Sunny",
-	"Huaquan",
-	"Fushikang",
-	"Guangzhen",
-	"Daling",
-	"Xinli",
-	"O-film",
-	"Boyi",
-	"Sanglaishi",
-	"Qunhui",
-	"Q-Tech",
-	"Unknow",
-	"Unknow",
-	"Unknow",
-	"Unknow",
-};
-
 /* static function definition */
 int32_t msm_sensor_driver_probe(void *setting,
 	struct msm_sensor_info_t *probed_info, char *entity_name)
@@ -739,6 +756,8 @@ int32_t msm_sensor_driver_probe(void *setting,
 			slave_info32->sensor_init_params;
 		slave_info->output_format =
 			slave_info32->output_format;
+		slave_info->bypass_video_node_creation =
+			!!slave_info32->bypass_video_node_creation;
 		kfree(slave_info32);
 	} else
 #endif
@@ -781,7 +800,8 @@ int32_t msm_sensor_driver_probe(void *setting,
 		slave_info->sensor_init_params.position);
 	CDBG("mount %d",
 		slave_info->sensor_init_params.sensor_mount_angle);
-
+	CDBG("bypass video node creation %d",
+		slave_info->bypass_video_node_creation);
 	/* Validate camera id */
 	if (slave_info->camera_id >= MAX_CAMERAS) {
 		pr_err("failed: invalid camera id %d max %d",
@@ -909,6 +929,7 @@ CSID_TG:
 	s_ctrl->sensordata->eeprom_name = slave_info->eeprom_name;
 	s_ctrl->sensordata->actuator_name = slave_info->actuator_name;
 	s_ctrl->sensordata->ois_name = slave_info->ois_name;
+	s_ctrl->sensordata->flash_name = slave_info->flash_name;
 	/*
 	 * Update eeporm subdevice Id by input eeprom name
 	 */
@@ -932,6 +953,12 @@ CSID_TG:
 		goto free_camera_info;
 	}
 
+	rc = msm_sensor_fill_flash_subdevid_by_name(s_ctrl);
+	if (rc < 0) {
+		pr_err("%s failed %d\n", __func__, __LINE__);
+		goto free_camera_info;
+	}
+
 	/* Power up and probe sensor */
 	rc = s_ctrl->func_tbl->sensor_power_up(s_ctrl);
 	if (rc < 0) {
@@ -940,6 +967,9 @@ CSID_TG:
 	}
 
 	pr_err("%s probe succeeded", slave_info->sensor_name);
+
+	s_ctrl->bypass_video_node_creation =
+		slave_info->bypass_video_node_creation;
 
 	/*
 	 * Update the subdevice id of flash-src based on availability in kernel.
@@ -981,7 +1011,7 @@ CSID_TG:
 	}
 	/* Update sensor mount angle and position in media entity flag */
 	is_yuv = (slave_info->output_format == MSM_SENSOR_YCBCR) ? 1 : 0;
-	mount_pos = is_yuv << 25 |
+	mount_pos = ((s_ctrl->is_secure & 0x1) << 26) | is_yuv << 25 |
 		(s_ctrl->sensordata->sensor_info->position << 16) |
 		((s_ctrl->sensordata->
 		sensor_info->sensor_mount_angle / 90) << 8);
@@ -992,19 +1022,6 @@ CSID_TG:
 	s_ctrl->sensordata->cam_slave_info = slave_info;
 
 	msm_sensor_fill_sensor_info(s_ctrl, probed_info, entity_name);
-
-	hardwareinfo_set_prop(probed_info->position == BACK_CAMERA_B
-			? HARDWARE_BACK_CAM:HARDWARE_FRONT_CAM, probed_info->sensor_name);
-	if (main_module_id > 0)  {
-		hardwareinfo_set_prop(HARDWARE_BACK_CAM_MOUDULE_ID, module_info[main_module_id]);
-	} else {
-		hardwareinfo_set_prop(HARDWARE_BACK_CAM_MOUDULE_ID, module_info[0]);
-	}
-	if (sub_module_id > 0)  {
-		hardwareinfo_set_prop(HARDWARE_FRONT_CAM_MOUDULE_ID, module_info[sub_module_id]);
-	} else{
-		hardwareinfo_set_prop(HARDWARE_FRONT_CAM_MOUDULE_ID, module_info[0]);
-	}
 
 	/*
 	 * Set probe succeeded flag to 1 so that no other camera shall
@@ -1084,6 +1101,16 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 	if (rc < 0) {
 		pr_err("failed: msm_sensor_driver_get_gpio_data rc %d", rc);
 		goto FREE_VREG_DATA;
+	}
+
+	/* Get custom mode */
+	rc = of_property_read_u32(of_node, "qcom,secure",
+		&s_ctrl->is_secure);
+	CDBG("qcom,secure = %d, rc %d", s_ctrl->is_secure, rc);
+	if (rc < 0) {
+		/* Set default to non-secure mode */
+		s_ctrl->is_secure = 0;
+		rc = 0;
 	}
 
 	/* Get CCI master */
@@ -1199,6 +1226,7 @@ static int32_t msm_sensor_driver_parse(struct msm_sensor_ctrl_t *s_ctrl)
 FREE_DT_DATA:
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_req_tbl);
+	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_set_tbl);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf);
 	kfree(s_ctrl->sensordata->power_info.cam_vreg);
 	kfree(s_ctrl->sensordata);
