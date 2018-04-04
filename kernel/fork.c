@@ -714,10 +714,14 @@ static void mmput_async_fn(struct work_struct *work)
 	__mmput(mm);
 }
 
+static bool mmput_async_init = false;
 void mmput_async(struct mm_struct *mm)
 {
 	if (atomic_dec_and_test(&mm->mm_users)) {
-		INIT_WORK(&mm->async_put_work, mmput_async_fn);
+		if (!mmput_async_init) {
+			INIT_WORK(&mm->async_put_work, mmput_async_fn);
+			mmput_async_init =  true;
+		}
 		schedule_work(&mm->async_put_work);
 	}
 }
