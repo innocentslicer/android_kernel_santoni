@@ -5,16 +5,12 @@ SUB=$2
 TP=$3
 
 rm -f repack_zip/clarity/zImage
-rm -f repack_zip/system/lib/modules/*.ko
 
-if [ ! -d repack_zip/system ]; then
-	mkdir repack_zip/system
-	mkdir repack_zip/system/lib
-	mkdir repack_zip/system/lib/modules
+if [ -d repack_zip/system ]; then
+	rm -rf repack_zip/system
 fi
 
 mv arch/arm64/boot/Image.gz-dtb repack_zip/clarity/zImage
-find -name "*.ko" -exec mv {} repack_zip/system/lib/modules \;
 
 cd repack_zip
 
@@ -24,7 +20,7 @@ if [ ! $VER ] && [ ! $SUB ]; then
 fi
 
 if [ ! $TP ]; then
-	zip -r ../../release_santoni/Clarity-v$VER.$SUB-MIUI_HM4X.zip *
+	zip -r ../../release_santoni/Clarity-v$VER.$SUB-AOSP-N_HM4X.zip *
 else
-	zip -r ../../release_santoni/Clarity-$TP-v$VER.$SUB-MIUI_HM4X.zip *
+	zip -r ../../release_santoni/Clarity-$TP-v$VER.$SUB-AOSP-N_HM4X.zip *
 fi

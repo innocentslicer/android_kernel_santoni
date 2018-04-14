@@ -69,7 +69,6 @@ include/generated
 arch/*/include/generated
 
 repack_zip/clarity/zImage
-repack_zip/system/lib/modules/*.ko
 
 # stgit generated dirs
 patches-*
